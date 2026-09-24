@@ -1,0 +1,21 @@
+{
+  "name": "seen",
+  "private": true,
+  "description": "Seen \u2014 read receipts for Gmail. Chrome extension + Cloudflare Worker.",
+  "scripts": {
+    "deploy-server": "node scripts/setup.mjs",
+    "dev:server": "pnpm --filter seen-server dev",
+    "build": "pnpm --filter seen-extension build",
+    "test": "pnpm -r test",
+    "typecheck": "pnpm -r typecheck",
+    "check": "pnpm typecheck && pnpm test && pnpm build",
+    "smoke": "node --no-warnings scripts/smoke.mjs",
+    "icons": "node scripts/make-icons.mjs"
+  },
+  "packageManager": "pnpm@9.15.3",
+  "type": "module",
+  "engines": {
+    "node": ">=22.18"
+  },
+  "license": "MIT"
+}

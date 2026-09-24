@@ -1,0 +1,7 @@
+packages:
+  - server
+  - extension
+onlyBuiltDependencies:
+  - esbuild
+  - workerd
+  - sharp

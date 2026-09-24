@@ -1,0 +1,9 @@
+node_modules/
+extension/dist/
+extension/*.zip
+.wrangler/
+.dev.vars
+.env
+*.log
+.DS_Store
+server/.seen-invite

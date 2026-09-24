@@ -1,0 +1,102 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>Seen settings</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <link rel="stylesheet" href="ui.css">
+</head>
+<body class="options">
+  <div class="page">
+    <header>
+      <img src="icons/icon48.png" width="40" height="40" alt="">
+      <div><h1>Seen</h1><p>Know when your emails are opened — quietly, right inside Gmail.</p></div>
+    </header>
+
+    <section class="card" id="connect-card">
+      <h2>Connect your server</h2>
+      <p class="lead" id="auth-lost" hidden><b>Your server no longer recognises this browser</b> (was Seen disconnected or its data deleted from another browser?). Reconnect below.</p>
+      <p class="lead">Seen records opens on a small server you own. Enter its address and the invite code printed when you deployed it.</p>
+      <form id="connect-form">
+        <label class="field"><span>Server address</span><input id="server" type="url" placeholder="https://seen.your-name.workers.dev" autocomplete="off" required></label>
+        <label class="field"><span>Invite code</span><input id="invite" type="password" placeholder="From the setup script" autocomplete="off"></label>
+        <div class="row-actions"><button id="connect" type="submit">Connect</button></div>
+        <p class="error" id="connect-error" role="alert"></p>
+      </form>
+      <details id="link-details">
+        <summary>Already use Seen in another browser?</summary>
+        <p>Connect this browser to the <b>same</b> account instead, so both browsers share one list and neither counts your own views as opens. In the other browser open Seen's settings, click <b>Copy connection code</b>, and paste it here.</p>
+        <label class="field" style="margin-top:12px"><span>Connection code</span><input id="link-code" type="password" autocomplete="off" placeholder="seen1_…"></label>
+        <div class="row-actions"><button id="link" type="button">Connect with code</button></div>
+        <p class="error" id="link-error" role="alert"></p>
+      </details>
+    </section>
+
+    <section class="card" id="connected-card" hidden>
+      <h2>Server</h2>
+      <div class="status"><span class="dot on"></span><div>Connected to <code id="server-host"></code><div class="faint" id="pending"></div></div></div>
+      <div class="switch">
+        <div class="label"><span>Use Seen in another browser too</span><span class="hint">Copy this code and paste it into Seen's settings there, so both browsers share this account. It's a key to your account: keep it private.</span></div>
+        <button class="text" id="copy-code" type="button" style="flex:none">Copy connection code</button>
+      </div>
+      <div class="row-actions">
+        <button class="text" id="disconnect" type="button">Disconnect</button>
+        <button class="danger" id="delete" type="button">Disconnect and delete my tracking data</button>
+      </div>
+      <p class="error" id="disconnect-error" role="alert"></p>
+    </section>
+
+    <section class="card">
+      <h2>Preferences</h2>
+      <div class="switch">
+        <div class="label"><span>Track new emails automatically</span><span class="hint">You can still switch it off per email with the eye icon in the compose window.</span></div>
+        <label class="toggle"><input type="checkbox" id="trackByDefault"><span></span></label>
+      </div>
+      <div class="switch">
+        <div class="label"><span>Desktop notifications</span><span class="hint">When someone opens an email you sent.</span></div>
+        <select id="notify" style="width:auto">
+          <option value="first">First open only</option>
+          <option value="every">Every open</option>
+          <option value="off">Off</option>
+        </select>
+      </div>
+      <div class="switch">
+        <div class="label"><span>In-Gmail alerts</span><span class="hint">A brief message at the bottom of Gmail when an email is first opened.</span></div>
+        <label class="toggle"><input type="checkbox" id="inGmailToasts"><span></span></label>
+      </div>
+    </section>
+
+    <section class="card">
+      <h2>How accurate is it?</h2>
+      <details>
+        <summary>What the check marks mean</summary>
+        <ul>
+          <li><b>Gray ✓</b> — sent, no open detected yet.</li>
+          <li><b>Green ✓✓</b> — opened. Click it on a sent message to see when and in what app.</li>
+          <li><b>Dashed amber ✓✓</b> — delivered to a privacy-protecting mail app (Apple Mail, Proton) that loads every email automatically, so a real read can't be confirmed.</li>
+        </ul>
+      </details>
+      <details>
+        <summary>What Seen filters out</summary>
+        <ul>
+          <li>You viewing your own sent email in Gmail in this browser (blocked before it even loads).</li>
+          <li>Apple Mail Privacy Protection, Proton and Gmail preloading images on delivery.</li>
+          <li>Corporate security scanners that open emails on delivery.</li>
+          <li>Repeat loads within a few minutes (counted as one open).</li>
+        </ul>
+      </details>
+      <details>
+        <summary>When an open can be missed or miscounted</summary>
+        <ul>
+          <li>The recipient has images turned off, or reads in plain text.</li>
+          <li>You open your own sent email on your phone (the extension isn't there to say "that was me").</li>
+          <li>Group emails: Seen knows the email was opened, not by whom.</li>
+          <li>Scheduled sends aren't tracked (Gmail sends them from its servers later).</li>
+          <li>Repeat opens can be undercounted because Google caches images.</li>
+        </ul>
+      </details>
+    </section>
+  </div>
+  <script src="options.js"></script>
+</body>
+</html>

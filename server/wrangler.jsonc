@@ -1,0 +1,24 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "seen",
+  "main": "src/index.ts",
+  "compatibility_date": "2026-09-01",
+  "observability": { "enabled": true },
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "database_name": "seen",
+      // Filled in by `npm run setup` (scripts/setup.mjs). Any value works for local dev/tests.
+      "database_id": "00000000-0000-0000-0000-000000000000",
+      "migrations_dir": "migrations"
+    }
+  ],
+  // Daily housekeeping: drops pixel hits that never matched a registered email, and applies retention.
+  "triggers": { "crons": ["17 4 * * *"] },
+  "vars": {
+    // Delete emails and their open history after this many days. 0 = keep forever.
+    "RETENTION_DAYS": "365"
+  }
+  // Secret (set with `wrangler secret put INVITE_CODE`): required code to connect an extension.
+  // If unset, anyone who knows your server URL can register — setup.mjs always sets one.
+}

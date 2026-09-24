@@ -1,0 +1,22 @@
+[
+  {
+    "id": 1,
+    "priority": 1,
+    "action": { "type": "block" },
+    "condition": {
+      "urlFilter": "||pubsub.googleapis.com/v1/projects/mailfoogae/",
+      "initiatorDomains": ["mail.google.com"],
+      "resourceTypes": ["xmlhttprequest", "ping", "other"]
+    }
+  },
+  {
+    "id": 2,
+    "priority": 1,
+    "action": { "type": "block" },
+    "condition": {
+      "urlFilter": "||api.inboxsdk.com/api/v2/",
+      "initiatorDomains": ["mail.google.com"],
+      "resourceTypes": ["xmlhttprequest", "ping", "other"]
+    }
+  }
+]
