@@ -1,5 +1,13 @@
 import type { MessageDetail, MessageSummary, Recipient } from "../../shared/api";
-import { canonicalEmail, classify, isMicrosoftConsumer, summarize, type Hit } from "./classify";
+import {
+  canonicalEmail,
+  classify,
+  isMicrosoftConsumer,
+  summarize,
+  sweepKey,
+  SWEEP_WINDOW_MS,
+  type Hit,
+} from "./classify";
 
 /** D1 caps bound parameters per statement at 100. */
 const MAX_PARAMS = 90;
@@ -137,6 +145,9 @@ export async function buildSummaries(
     list.push(v.ts);
   }
 
+  const userId = rows[0]?.user_id;
+  const sweptHits = userId && hitRows.length ? await findSweptHits(db, userId, hitRows) : undefined;
+
   return rows.map((row) => {
     const recipients = parseRecipients(row.recipients);
     const classified = classify(
@@ -148,6 +159,7 @@ export async function buildSummaries(
         microsoftConsumer: recipients.some((r) => isMicrosoftConsumer(r.email)),
         ...selfRecipient(row.sender, recipients),
         recipientCount: recipients.length,
+        sweptHits,
       },
       hitsBy.get(row.token) ?? [],
       viewsBy.get(row.token) ?? [],
@@ -169,6 +181,73 @@ export async function buildSummaries(
         : [],
     };
   });
+}
+
+/**
+ * Find hits that were one address fetching pixels from several different emails at once.
+ *
+ * A recipient only ever holds the email you sent *them*, so a single address pulling pixels out of
+ * emails that went to different people is your own mailbox, not theirs — typically your phone
+ * rendering replies that quote your original message, tracking pixel and all. Those fetches say
+ * nothing about whether the recipient read anything, and left alone they mark long-dead emails as
+ * "delivered" (or worse, opened) days after the fact.
+ *
+ * If one person received every email in the burst, it really may be them, so it isn't a sweep.
+ */
+async function findSweptHits(db: D1Database, userId: string, hits: HitRow[]): Promise<Set<string>> {
+  const swept = new Set<string>();
+  const ips = [...new Set(hits.map((h) => h.ip).filter((ip): ip is string => !!ip))];
+  if (ips.length === 0) return swept;
+
+  const timestamps = hits.map((h) => h.ts);
+  const rows = await selectIn<{ ts: number; ip: string; token: string }>(
+    db,
+    (list) =>
+      `SELECT ts, ip, token FROM hits WHERE user_id = ? AND ts >= ? AND ts <= ? AND ip IN (${list})`,
+    ips,
+    [userId, Math.min(...timestamps) - SWEEP_WINDOW_MS, Math.max(...timestamps) + SWEEP_WINDOW_MS],
+  );
+
+  // Group each address's fetches into bursts, and keep the bursts that span several emails.
+  const byIp = new Map<string, { ts: number; token: string }[]>();
+  for (const r of rows) {
+    let list = byIp.get(r.ip);
+    if (!list) byIp.set(r.ip, (list = []));
+    list.push({ ts: r.ts, token: r.token });
+  }
+  const bursts: { ip: string; rows: { ts: number; token: string }[] }[] = [];
+  for (const [ip, list] of byIp) {
+    list.sort((a, b) => a.ts - b.ts);
+    let current: { ts: number; token: string }[] = [];
+    for (const row of list) {
+      if (current.length && row.ts - current[current.length - 1]!.ts > SWEEP_WINDOW_MS) {
+        bursts.push({ ip, rows: current });
+        current = [];
+      }
+      current.push(row);
+    }
+    if (current.length) bursts.push({ ip, rows: current });
+  }
+  const candidates = bursts.filter((b) => new Set(b.rows.map((r) => r.token)).size > 1);
+  if (candidates.length === 0) return swept;
+
+  const tokens = [...new Set(candidates.flatMap((b) => b.rows.map((r) => r.token)))];
+  const messageRows = await selectIn<{ token: string; recipients: string }>(
+    db,
+    (list) => `SELECT token, recipients FROM messages WHERE token IN (${list})`,
+    tokens,
+  );
+  const recipientsBy = new Map(
+    messageRows.map((m) => [m.token, new Set(parseRecipients(m.recipients).map((r) => canonicalEmail(r.email)))]),
+  );
+
+  for (const burst of candidates) {
+    const sets = [...new Set(burst.rows.map((r) => r.token))].map((t) => recipientsBy.get(t) ?? new Set<string>());
+    const shared = sets.reduce((acc, set) => new Set([...acc].filter((e) => set.has(e))));
+    if (shared.size > 0) continue; // one person got all of them — it really could be them
+    for (const row of burst.rows) swept.add(sweepKey({ ts: row.ts, ip: burst.ip }));
+  }
+  return swept;
 }
 
 function selfRecipient(sender: string, recipients: Recipient[]): { toSelfOnly: boolean; selfAmongRecipients: boolean } {

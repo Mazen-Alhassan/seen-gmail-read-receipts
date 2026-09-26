@@ -8,6 +8,7 @@ import {
   REPEAT_WINDOW_MS,
   SELF_VIEW_AFTER_MS,
   SELF_VIEW_BEFORE_MS,
+  sweepKey,
   classify,
   summarize,
   type Hit,
@@ -134,8 +135,9 @@ describe("classify", () => {
       country: "CA",
     };
     const open = SENT + 51_000;
+    // The 77ms twin is the same fetch (mail apps ask twice while rendering), so it collapses.
     const c = classify(msg, [hit(open, iphone), hit(open + 77, iphone)], [open + 22_000, open + 72_000]);
-    expect(c.map((x) => x.kind)).toEqual(["open", "repeat"]);
+    expect(c.map((x) => x.kind)).toEqual(["open"]);
     expect(c[0]!.detail).toBe("Mail app on iPhone · Montréal, CA");
     // Even right on top of a beacon, a non-Gmail fetch can't be the sender's Gmail.
     expect(kinds([hit(open, iphone)], [open])).toEqual(["open"]);
@@ -347,5 +349,31 @@ describe("classify", () => {
     const a = classify(msg, hits, []).map((c) => [c.hit.ts, c.kind]);
     const b = classify(msg, [...hits].reverse(), []).map((c) => [c.hit.ts, c.kind]);
     expect(a).toEqual(b);
+  });
+
+  it("ignores one mail app pulling several of your emails at once", () => {
+    // Your phone rendering replies that quote your original message: one address, one instant,
+    // several different emails. The server marks those hits before classifying.
+    const at = SENT + 3 * 24 * 60 * 60_000;
+    const relay = { ts: at, ip: "2a09:bac3::1", ua: UA.applePrivacy, asn: 13335, asOrg: "Cloudflare London, LLC" };
+    const swept = { ...msg, sweptHits: new Set([sweepKey(relay)]) };
+
+    expect(classify(swept, [hit(at, relay)], []).map((c) => c.kind)).toEqual(["self"]);
+    expect(summarize(classify(swept, [hit(at, relay)], [])).status).toBe("sent");
+    // Without that mark it would claim the recipient's mail app had loaded it.
+    expect(summarize(classify(msg, [hit(at, relay)], [])).status).toBe("unconfirmed");
+  });
+
+  it("counts a mail app asking twice while rendering as one fetch", () => {
+    const mac = { ua: UA.appleMailMac, ip: "47.149.170.15", asn: 5650, asOrg: "Verizon Business" };
+    const at = SENT + 3 * 60 * 60_000;
+    expect(kinds([hit(at, mac), hit(at, mac)])).toEqual(["open"]);
+    expect(kinds([hit(at, mac), hit(at + 1_500, mac)])).toEqual(["open"]);
+    // Far enough apart it is a genuine second look, and a different reader always counts.
+    expect(kinds([hit(at, mac), hit(at + 5_000, mac)])).toEqual(["open", "repeat"]);
+    expect(kinds([hit(at, mac), hit(at, { ...mac, ip: "198.51.100.7", asn: 7922, asOrg: "COMCAST" })])).toEqual([
+      "open",
+      "open",
+    ]);
   });
 });

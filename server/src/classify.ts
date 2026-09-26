@@ -29,6 +29,13 @@ export const MICROSOFT_SCAN_WINDOW_MS = UNDO_SEND_MAX_MS + 30_000;
 export const MICROSOFT_365_SCAN_WINDOW_MS = UNDO_SEND_MAX_MS + 15 * 60_000;
 /** The same reader again within this window (from their first fetch) is one reading session. */
 export const REPEAT_WINDOW_MS = 3 * 60_000;
+/**
+ * One address fetching pixels from several of your emails this close together is a mailbox being
+ * rendered, not several people reading at the same moment. See `sweptHits`.
+ */
+export const SWEEP_WINDOW_MS = 10_000;
+/** The same client asking twice in this long is one fetch, not a re-read. */
+const DUPLICATE_MS = 2_000;
 /** Shorter for shared proxies when several people got the email, so each of them counts. */
 export const SHARED_PROXY_REPEAT_MS = 45_000;
 
@@ -77,6 +84,18 @@ export interface MessageContext {
   /** The sender is one of several recipients (cc/bcc self): a Gmail open could be their copy. */
   selfAmongRecipients: boolean;
   recipientCount: number;
+  /**
+   * Hits that were part of one address fetching pixels from several of your emails at once, keyed
+   * by `sweepKey`. A recipient only ever holds the email you sent *them*, so a single address
+   * pulling pixels out of emails with different recipients is your own mailbox — usually your
+   * phone rendering replies that quote your original message, tracking pixel and all.
+   */
+  sweptHits?: ReadonlySet<string>;
+}
+
+/** Identifies one hit well enough to mark it as part of a mailbox sweep. */
+export function sweepKey(hit: Pick<Hit, "ts" | "ip">): string {
+  return `${hit.ts}|${hit.ip ?? ""}`;
 }
 
 export interface Classified {
@@ -92,7 +111,7 @@ export interface Classified {
  * arrives after its hit (e.g. a late "that was me" beacon) is always taken into account.
  */
 export function classify(msg: MessageContext, hits: Hit[], selfViews: number[]): Classified[] {
-  const sorted = [...hits].sort((a, b) => a.ts - b.ts);
+  const sorted = dropDuplicates([...hits].sort((a, b) => a.ts - b.ts));
   const out: Classified[] = [];
   // Start of each reader's current reading session.
   const sessionStart = new Map<string, number>();
@@ -128,6 +147,21 @@ export function classify(msg: MessageContext, hits: Hit[], selfViews: number[]):
   return out;
 }
 
+/**
+ * Mail clients often request the same image twice while rendering one message (once for the
+ * preview, once for the body). Those arrive together from the same address and are one fetch, so
+ * showing both would make one open look like two.
+ */
+function dropDuplicates(sorted: Hit[]): Hit[] {
+  const out: Hit[] = [];
+  for (const hit of sorted) {
+    const prev = out.findLast((h) => h.ip === hit.ip && h.ua === hit.ua);
+    if (prev && hit.ts - prev.ts <= DUPLICATE_MS) continue;
+    out.push(hit);
+  }
+  return out;
+}
+
 /** Everything that isn't a person opening the email; null means it is one. */
 function judge(
   msg: MessageContext,
@@ -136,6 +170,11 @@ function judge(
   sinceSend: number,
   selfViews: number[],
 ): [HitKind, string] | null {
+  // One address pulling several of your emails at once is a mailbox rendering, not readers.
+  if (msg.sweptHits?.has(sweepKey(hit))) {
+    return ["self", "Your own mail app loading several of your emails at once (ignored)"];
+  }
+
   if (source.via === "google_proxy") {
     if (selfViews.some((v) => hit.ts >= v - SELF_VIEW_BEFORE_MS && hit.ts <= v + SELF_VIEW_AFTER_MS)) {
       return ["self", "You, viewing your sent email (ignored)"];
