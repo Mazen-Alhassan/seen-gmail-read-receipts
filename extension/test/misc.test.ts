@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import { decodeConnectionCode, encodeConnectionCode, normaliseServerUrl } from "../src/lib/config";
 import { gmailThreadUrl, notificationTitle, recipientsLabel, relativeTime, statusLine } from "../src/lib/format";
 import { ownToken, undoneToken } from "../src/content/gmail";
+import { FOLLOW_UPS, greeting } from "../src/lib/followups";
 import { TokenPool } from "../src/content/tokens";
 import { b64urlEncode, importMintKey, mintToken, newUserId, randomBytes } from "../../shared/token";
 
@@ -130,5 +131,41 @@ describe("undo send", () => {
     // A reply quoting an earlier email isn't an undo.
     body.innerHTML = `<div dir="ltr">Following up</div><div class="gmail_quote"><img src="https://${host}/i/${older}.gif"></div>`;
     expect(undoneToken(body, host, me, new Map([[older, now - 5_000]]), now)).toBeNull();
+  });
+});
+
+describe("follow-up greetings", () => {
+  const hi = (name: string | undefined, email: string) => greeting([{ name, email } as never]);
+
+  it("finds a first name in the shapes Gmail hands us", () => {
+    expect(hi("Nadav Cohen", "nadav@eve.security")).toBe("Hey Nadav");
+    expect(hi(undefined, "brandon@mindfort.ai")).toBe("Hey Brandon");
+    expect(hi(undefined, "scott.ponte@robinhood.com")).toBe("Hey Scott");
+    expect(hi(undefined, "ada_lovelace@example.com")).toBe("Hey Ada");
+    // The directory form some companies use, trailing disambiguator and all.
+    expect(hi("Nugent, Catherine 1", "catherine.1.nugent@global.lmco.com")).toBe("Hey Catherine");
+    expect(hi("NEAL", "neal@manifold.security")).toBe("Hey Neal");
+  });
+
+  it("would rather greet nobody than greet the wrong name", () => {
+    // Guessing a name from a role address means opening a cold email with "Hey Careers".
+    expect(hi(undefined, "careers@example.com")).toBe("Hey");
+    expect(hi(undefined, "hr@example.com")).toBe("Hey");
+    expect(hi(undefined, "cy@aegisai.ai")).toBe("Hey"); // initials are a coin flip
+    expect(greeting([])).toBe("Hey");
+    expect(hi("support@example.com", "support@example.com")).toBe("Hey");
+  });
+
+  it("writes short, sendable follow-ups", () => {
+    expect(FOLLOW_UPS).toHaveLength(4);
+    expect(new Set(FOLLOW_UPS.map((f) => f.id)).size).toBe(4);
+    for (const f of FOLLOW_UPS) {
+      const body = f.body("Hey Nadav");
+      expect(body.startsWith("Hey Nadav,")).toBe(true);
+      expect(body.trim().split(/\n\s*\n/).length).toBeLessThanOrEqual(4);
+      expect(body.length).toBeLessThan(320);
+      // A follow-up that mentions tracking gives the game away.
+      expect(body.toLowerCase()).not.toMatch(/opened|seen it|tracking/);
+    }
   });
 });

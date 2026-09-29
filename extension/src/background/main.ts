@@ -45,6 +45,7 @@ const HANDLED = new Set<Request["type"]>([
   "openOptions",
   "exportConnection",
   "importConnection",
+  "followUp",
 ]);
 
 // ---------------------------------------------------------------------------------------------
@@ -234,6 +235,59 @@ setUnauthorizedHandler(() => {
   })();
 });
 
+/**
+ * Show the thread and hand its Gmail tab a follow-up to draft.
+ *
+ * Reuses a tab that's already on the thread, then any Gmail tab, and only opens a new one as a
+ * last resort — nobody wants a fresh tab every time they nudge someone. The text only ever lands
+ * in a reply box: sending stays a deliberate click.
+ */
+async function openFollowUp(sender: string, threadId: string, body: string): Promise<void> {
+  const open = (await chrome.tabs.query({ url: GMAIL_TABS })).filter((t) => t.id !== undefined);
+  const onThread = open.find((t) => (t.url ?? "").includes(threadId));
+  const reuse = onThread ?? open[0];
+
+  let tabId: number;
+  if (reuse?.id !== undefined) {
+    tabId = reuse.id;
+    if (!onThread) await chrome.tabs.update(tabId, { url: gmailThreadUrl(sender, threadId) });
+    await chrome.tabs.update(tabId, { active: true });
+    if (reuse.windowId !== undefined) {
+      await chrome.windows.update(reuse.windowId, { focused: true }).catch(() => undefined);
+    }
+  } else {
+    const created = await chrome.tabs.create({ url: gmailThreadUrl(sender, threadId) });
+    if (created.id === undefined) throw new Error("Couldn't open Gmail");
+    tabId = created.id;
+  }
+
+  await waitForLoad(tabId);
+  await deliver(tabId, { type: "followUp", threadId, body });
+}
+
+/** A tab we just navigated is still running the old page for a moment, which would swallow the push. */
+async function waitForLoad(tabId: number): Promise<void> {
+  for (let i = 0; i < 40; i++) {
+    const tab = await chrome.tabs.get(tabId).catch(() => null);
+    if (!tab || tab.status === "complete") return;
+    await new Promise((r) => setTimeout(r, 250));
+  }
+}
+
+/** Gmail's content script may still be starting up, so keep offering until someone takes it. */
+async function deliver(tabId: number, push: Push): Promise<void> {
+  for (const wait of [0, 400, 800, 1_500, 2_500, 4_000]) {
+    if (wait) await new Promise((r) => setTimeout(r, wait));
+    try {
+      await chrome.tabs.sendMessage(tabId, push);
+      return;
+    } catch {
+      /* not listening yet */
+    }
+  }
+  throw new Error("Gmail didn't pick that up. Open the thread and try again.");
+}
+
 async function broadcast(push: Push): Promise<void> {
   const tabs = await chrome.tabs.query({ url: GMAIL_TABS });
   await Promise.all(
@@ -403,6 +457,10 @@ async function handle(req: Request): Promise<Responses[Request["type"]]> {
 
     case "importConnection":
       return importConnection(req.code);
+
+    case "followUp":
+      await openFollowUp(req.sender, req.threadId, req.body);
+      return { ok: true };
   }
 }
 

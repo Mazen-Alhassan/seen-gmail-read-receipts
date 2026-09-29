@@ -7,6 +7,7 @@ import {
   extensionAlive,
   refreshComposeButtons,
   setupCompose,
+  startFollowUp,
   setupMessageViews,
   setupThreadRows,
   type GmailContext,
@@ -137,6 +138,8 @@ async function main(): Promise<void> {
     if (msg?.type === "opened") {
       store.refreshWatched();
       toast(msg.events);
+    } else if (msg?.type === "followUp") {
+      void writeFollowUp(msg.threadId, msg.body);
     } else if (msg?.type === "stateChanged") {
       void send({ type: "state" }).then((next) => {
         const reconnected = next.userId !== state.userId;
@@ -154,6 +157,26 @@ async function main(): Promise<void> {
       });
     }
   });
+
+  /**
+   * Gmail renders a thread a moment after the tab reports itself loaded, so wait for the reply
+   * control to exist before clicking it. If it never shows up, put the text on the clipboard
+   * rather than dropping it on the floor.
+   */
+  async function writeFollowUp(threadId: string, body: string): Promise<void> {
+    for (const wait of [0, 300, 600, 1_000, 1_500, 2_000, 3_000]) {
+      if (wait) await new Promise((r) => setTimeout(r, wait));
+      if (!location.href.includes(threadId)) continue; // still on the way to the thread
+      if (startFollowUp(body)) return;
+    }
+    const copied = await navigator.clipboard.writeText(body).then(() => true).catch(() => false);
+    showToast(
+      copied
+        ? "Couldn't open the reply box, so your follow-up is copied — just paste it."
+        : "Couldn't open the reply box for that follow-up.",
+      { key: "follow-up", timeoutMs: 10_000 },
+    );
+  }
 
   // Keep what's on screen fresh while you're looking at it.
   setInterval(() => {

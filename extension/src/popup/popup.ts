@@ -1,5 +1,6 @@
 import type { MessageSummary } from "../../../shared/api";
 import { gmailThreadUrl, recipientsLabel, relativeTime, statusLine } from "../lib/format";
+import { FOLLOW_UPS, greeting } from "../lib/followups";
 import { send, type State } from "../lib/protocol";
 import { statusSvg } from "../content/icons";
 
@@ -112,12 +113,70 @@ function item(m: MessageSummary): HTMLElement {
   (el.querySelector(".subject > span:last-child") as HTMLElement).textContent = m.subject || "(no subject)";
   (el.querySelector(".meta") as HTMLElement).textContent = `${recipientsLabel(m.recipients)} · ${statusLine(m)}`;
   (el.querySelector(".when") as HTMLElement).textContent = relativeTime(m.sentAt);
-  const open = () => void chrome.tabs.create({ url: gmailThreadUrl(m.sender, m.threadId) });
-  el.addEventListener("click", open);
+  // An email they've read but not answered is the one worth nudging, so offer the follow-ups
+  // first. Everything else goes straight to the thread, as before.
+  const act = () =>
+    m.status === "opened" && m.threadId ? renderFollowUps(m) : void chrome.tabs.create({ url: gmailThreadUrl(m.sender, m.threadId) });
+  el.addEventListener("click", act);
   el.addEventListener("keydown", (e) => {
-    if (e.key === "Enter") open();
+    if (e.key === "Enter") act();
   });
   return el;
+}
+
+/** Pick a follow-up for an email that was opened and never answered. */
+function renderFollowUps(m: MessageSummary): void {
+  const hi = greeting(m.recipients);
+  content.innerHTML = `
+    <div class="followups">
+      <button class="back" id="back">← Back</button>
+      <div class="head">
+        <div class="subject"></div>
+        <div class="meta"></div>
+      </div>
+      <div class="choices"></div>
+      <p class="foot">Opens a reply in Gmail with this text. Nothing is sent until you send it.</p>
+    </div>`;
+  (content.querySelector(".head .subject") as HTMLElement).textContent = m.subject || "(no subject)";
+  (content.querySelector(".head .meta") as HTMLElement).textContent =
+    `${recipientsLabel(m.recipients)} · ${statusLine(m)}`;
+  content.querySelector("#back")?.addEventListener("click", render);
+
+  const choices = content.querySelector(".choices") as HTMLElement;
+  choices.replaceChildren(
+    ...FOLLOW_UPS.map((f) => {
+      const b = document.createElement("button");
+      b.className = "choice";
+      b.innerHTML = `<span class="title"></span><span class="hint"></span><span class="preview"></span>`;
+      (b.querySelector(".title") as HTMLElement).textContent = f.title;
+      (b.querySelector(".hint") as HTMLElement).textContent = f.hint;
+      // The greeting is identical on all four, so preview the part that actually differs.
+      (b.querySelector(".preview") as HTMLElement).textContent = f
+        .body(hi)
+        .trim()
+        .split(/\n\s*\n/)
+        .slice(1)
+        .join(" ");
+      b.addEventListener("click", () => void choose(m, f.body(hi), b));
+      return b;
+    }),
+  );
+}
+
+async function choose(m: MessageSummary, body: string, button: HTMLButtonElement): Promise<void> {
+  const buttons = content.querySelectorAll<HTMLButtonElement>(".choice");
+  buttons.forEach((b) => (b.disabled = true));
+  button.classList.add("busy");
+  try {
+    await send({ type: "followUp", sender: m.sender, threadId: m.threadId!, body });
+    window.close(); // Gmail is now in front with the reply open
+  } catch (err) {
+    button.classList.remove("busy");
+    buttons.forEach((b) => (b.disabled = false));
+    const foot = content.querySelector(".foot") as HTMLElement;
+    foot.textContent = err instanceof Error ? err.message : String(err);
+    foot.classList.add("error");
+  }
 }
 
 main().catch((err) => renderMessage("Something went wrong", err instanceof Error ? err.message : String(err)));

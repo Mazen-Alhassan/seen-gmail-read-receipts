@@ -36,7 +36,8 @@ export type Request =
   | { type: "markSeen"; seenUpTo?: number }
   | { type: "openOptions" }
   | { type: "exportConnection" }
-  | { type: "importConnection"; code: string };
+  | { type: "importConnection"; code: string }
+  | { type: "followUp"; sender: string; threadId: string; body: string };
 
 export interface Responses {
   state: State;
@@ -55,12 +56,15 @@ export interface Responses {
   openOptions: { ok: true };
   exportConnection: { code: string };
   importConnection: { ok: true } | { ok: false; error: string };
+  followUp: { ok: true };
 }
 
 /** Pushed from the service worker to open Gmail tabs. */
 export type Push =
   | { type: "opened"; events: OpenNotification[] }
-  | { type: "stateChanged" };
+  | { type: "stateChanged" }
+  /** Drop this text into a reply on the thread now showing in this tab. Never sends it. */
+  | { type: "followUp"; threadId: string; body: string };
 
 type Reply<T> = { ok: true; value: T } | { ok: false; error: string };
 
