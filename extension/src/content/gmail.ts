@@ -47,11 +47,6 @@ export function refreshComposeButtons(): void {
 export function setupCompose(ctx: GmailContext): void {
   ctx.sdk.Compose.registerComposeViewHandler((composeView) => {
     try {
-      fillPendingFollowUp(composeView);
-    } catch (err) {
-      console.warn("[Seen] couldn't write the follow-up", err);
-    }
-    try {
       attachToCompose(ctx, composeView);
     } catch (err) {
       console.warn("[Seen] couldn't attach to compose window", err);
@@ -59,66 +54,6 @@ export function setupCompose(ctx: GmailContext): void {
   });
 }
 
-// ---------------------------------------------------------------------------------------------
-// Follow-ups: text chosen in the popup, dropped into a reply here. Never sent for you.
-// ---------------------------------------------------------------------------------------------
-
-/** Text waiting for the next reply window to appear. */
-let pendingFollowUp: { body: string; until: number } | null = null;
-
-/** How long we'll wait for Gmail to open the reply box before giving up on a follow-up. */
-const FOLLOW_UP_TIMEOUT_MS = 15_000;
-
-/**
- * Open a reply on the thread that's showing and write `body` into it.
- *
- * InboxSDK can't open a reply itself, so we click Gmail's own reply button and catch the compose
- * window it creates. Returns false if we couldn't find the button — the caller then tells you, so
- * the text is never silently lost.
- */
-export function startFollowUp(body: string): boolean {
-  const button = findReplyButton();
-  if (!button) return false;
-  pendingFollowUp = { body, until: Date.now() + FOLLOW_UP_TIMEOUT_MS };
-  button.click();
-  return true;
-}
-
-function fillPendingFollowUp(composeView: ComposeView): void {
-  const pending = pendingFollowUp;
-  if (!pending) return;
-  if (Date.now() > pending.until) {
-    pendingFollowUp = null;
-    return;
-  }
-  if (!composeView.isReply()) return; // a compose the user opened themselves, not ours
-  pendingFollowUp = null;
-  // Above the quoted thread, which is where a reply belongs.
-  composeView.insertTextIntoBodyAtCursor(pending.body);
-  setTimeout(() => {
-    try {
-      composeView.getBodyElement().focus();
-    } catch {
-      /* the window may already be gone */
-    }
-  }, 0);
-}
-
-/**
- * Gmail's reply control at the foot of a thread. Its aria-labels are translated, so the stable
- * internal class comes first and the label is only a fallback for layouts that lack it.
- */
-function findReplyButton(): HTMLElement | null {
-  const byClass = document.querySelector<HTMLElement>('div.ams.bkH[role="button"]');
-  if (byClass) return byClass;
-  const candidates = document.querySelectorAll<HTMLElement>('[role="button"][aria-label], [role="link"][aria-label]');
-  for (const el of candidates) {
-    const label = el.getAttribute("aria-label") ?? "";
-    if (/^reply\b/i.test(label) && !/all/i.test(label)) return el;
-  }
-  // The collapsed "Reply" box Gmail shows under the last message.
-  return document.querySelector<HTMLElement>(".aDh [role='button'], .amn [role='button']");
-}
 
 /** Tokens this tab just sent, so an Undo that reopens the email can be recognised. */
 const recentlySent = new Map<string, number>();

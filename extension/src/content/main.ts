@@ -7,7 +7,6 @@ import {
   extensionAlive,
   refreshComposeButtons,
   setupCompose,
-  startFollowUp,
   setupMessageViews,
   setupThreadRows,
   type GmailContext,
@@ -139,7 +138,7 @@ async function main(): Promise<void> {
       store.refreshWatched();
       toast(msg.events);
     } else if (msg?.type === "followUp") {
-      void writeFollowUp(msg.threadId, msg.body);
+      void offerFollowUp(msg.body, msg.copied);
     } else if (msg?.type === "stateChanged") {
       void send({ type: "state" }).then((next) => {
         const reconnected = next.userId !== state.userId;
@@ -159,23 +158,20 @@ async function main(): Promise<void> {
   });
 
   /**
-   * Gmail renders a thread a moment after the tab reports itself loaded, so wait for the reply
-   * control to exist before clicking it. If it never shows up, put the text on the clipboard
-   * rather than dropping it on the floor.
+   * The follow-up was copied when you picked it. Say so here, next to the thread it belongs to —
+   * and if the popup's clipboard write was refused, offer a button, which is a user gesture and
+   * therefore always allowed.
    */
-  async function writeFollowUp(threadId: string, body: string): Promise<void> {
-    for (const wait of [0, 300, 600, 1_000, 1_500, 2_000, 3_000]) {
-      if (wait) await new Promise((r) => setTimeout(r, wait));
-      if (!location.href.includes(threadId)) continue; // still on the way to the thread
-      if (startFollowUp(body)) return;
+  async function offerFollowUp(body: string, copied: boolean): Promise<void> {
+    if (copied || (await navigator.clipboard.writeText(body).then(() => true).catch(() => false))) {
+      showToast("Follow-up copied. Hit Reply and paste it in.", { key: "follow-up", timeoutMs: 12_000 });
+      return;
     }
-    const copied = await navigator.clipboard.writeText(body).then(() => true).catch(() => false);
-    showToast(
-      copied
-        ? "Couldn't open the reply box, so your follow-up is copied — just paste it."
-        : "Couldn't open the reply box for that follow-up.",
-      { key: "follow-up", timeoutMs: 10_000 },
-    );
+    showToast("Your follow-up is ready.", {
+      key: "follow-up",
+      timeoutMs: 0,
+      button: { title: "Copy", onClick: () => void navigator.clipboard.writeText(body).catch(() => undefined) },
+    });
   }
 
   // Keep what's on screen fresh while you're looking at it.

@@ -5,8 +5,8 @@
  * busy, not hostile, and a breezy nudge reads better than a formal one. Each is a few lines at
  * most — a long follow-up to an unanswered email is a worse follow-up.
  *
- * Nothing here is ever sent on your behalf: picking one drops the text into a Gmail reply for you
- * to edit and send yourself.
+ * Nothing here is ever sent on your behalf: picking one copies the text and opens the thread, so
+ * you paste, edit and send it yourself.
  */
 
 import type { Recipient } from "../../../shared/api";

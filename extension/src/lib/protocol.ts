@@ -37,7 +37,7 @@ export type Request =
   | { type: "openOptions" }
   | { type: "exportConnection" }
   | { type: "importConnection"; code: string }
-  | { type: "followUp"; sender: string; threadId: string; body: string };
+  | { type: "followUp"; sender: string; threadId: string; body: string; copied: boolean };
 
 export interface Responses {
   state: State;
@@ -63,8 +63,8 @@ export interface Responses {
 export type Push =
   | { type: "opened"; events: OpenNotification[] }
   | { type: "stateChanged" }
-  /** Drop this text into a reply on the thread now showing in this tab. Never sends it. */
-  | { type: "followUp"; threadId: string; body: string };
+  /** A follow-up is on the clipboard (or still needs copying) for the thread in this tab. */
+  | { type: "followUp"; body: string; copied: boolean };
 
 type Reply<T> = { ok: true; value: T } | { ok: false; error: string };
 

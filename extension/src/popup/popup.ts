@@ -135,7 +135,7 @@ function renderFollowUps(m: MessageSummary): void {
         <div class="meta"></div>
       </div>
       <div class="choices"></div>
-      <p class="foot">Opens a reply in Gmail with this text. Nothing is sent until you send it.</p>
+      <p class="foot">Copies the text and opens the thread — hit Reply and paste. Nothing is ever sent for you.</p>
     </div>`;
   (content.querySelector(".head .subject") as HTMLElement).textContent = m.subject || "(no subject)";
   (content.querySelector(".head .meta") as HTMLElement).textContent =
@@ -167,9 +167,11 @@ async function choose(m: MessageSummary, body: string, button: HTMLButtonElement
   const buttons = content.querySelectorAll<HTMLButtonElement>(".choice");
   buttons.forEach((b) => (b.disabled = true));
   button.classList.add("busy");
+  // Copy here, while the click is still a user gesture — the surest moment we get.
+  const copied = await copyText(body);
   try {
-    await send({ type: "followUp", sender: m.sender, threadId: m.threadId!, body });
-    window.close(); // Gmail is now in front with the reply open
+    await send({ type: "followUp", sender: m.sender, threadId: m.threadId!, body, copied });
+    window.close(); // Gmail is now in front, with the follow-up ready to paste
   } catch (err) {
     button.classList.remove("busy");
     buttons.forEach((b) => (b.disabled = false));
@@ -180,3 +182,25 @@ async function choose(m: MessageSummary, body: string, button: HTMLButtonElement
 }
 
 main().catch((err) => renderMessage("Something went wrong", err instanceof Error ? err.message : String(err)));
+
+/** execCommand is deprecated but still the reliable fallback when the async clipboard is refused. */
+async function copyText(text: string): Promise<boolean> {
+  try {
+    await navigator.clipboard.writeText(text);
+    return true;
+  } catch {
+    /* fall through */
+  }
+  try {
+    const area = document.createElement("textarea");
+    area.value = text;
+    area.style.cssText = "position:fixed;opacity:0";
+    document.body.append(area);
+    area.select();
+    const ok = document.execCommand("copy");
+    area.remove();
+    return ok;
+  } catch {
+    return false;
+  }
+}

@@ -236,13 +236,12 @@ setUnauthorizedHandler(() => {
 });
 
 /**
- * Show the thread and hand its Gmail tab a follow-up to draft.
+ * Show the thread, so the follow-up sitting on the clipboard can be pasted into it.
  *
  * Reuses a tab that's already on the thread, then any Gmail tab, and only opens a new one as a
- * last resort — nobody wants a fresh tab every time they nudge someone. The text only ever lands
- * in a reply box: sending stays a deliberate click.
+ * last resort — nobody wants a fresh tab every time they nudge someone.
  */
-async function openFollowUp(sender: string, threadId: string, body: string): Promise<void> {
+async function openFollowUp(sender: string, threadId: string, body: string, copied: boolean): Promise<void> {
   const open = (await chrome.tabs.query({ url: GMAIL_TABS })).filter((t) => t.id !== undefined);
   const onThread = open.find((t) => (t.url ?? "").includes(threadId));
   const reuse = onThread ?? open[0];
@@ -262,7 +261,7 @@ async function openFollowUp(sender: string, threadId: string, body: string): Pro
   }
 
   await waitForLoad(tabId);
-  await deliver(tabId, { type: "followUp", threadId, body });
+  await deliver(tabId, { type: "followUp", body, copied });
 }
 
 /** A tab we just navigated is still running the old page for a moment, which would swallow the push. */
@@ -285,7 +284,7 @@ async function deliver(tabId: number, push: Push): Promise<void> {
       /* not listening yet */
     }
   }
-  throw new Error("Gmail didn't pick that up. Open the thread and try again.");
+  // The thread is open and the text is already copied, so a silent miss here costs nothing.
 }
 
 async function broadcast(push: Push): Promise<void> {
@@ -459,7 +458,7 @@ async function handle(req: Request): Promise<Responses[Request["type"]]> {
       return importConnection(req.code);
 
     case "followUp":
-      await openFollowUp(req.sender, req.threadId, req.body);
+      await openFollowUp(req.sender, req.threadId, req.body, req.copied);
       return { ok: true };
   }
 }
