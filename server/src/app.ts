@@ -10,6 +10,15 @@ import type {
 } from "../../shared/api";
 import { TOKEN_RE, newUserId, tokenUserId } from "../../shared/token";
 import {
+  PER_ADDRESS,
+  SHARED,
+  STRIKE_TTL_MS,
+  callerAddress,
+  clearFailures,
+  recordFailure,
+  waitRequired,
+} from "./ratelimit";
+import {
   authenticToken,
   forgetCachedUser,
   newApiKey,
@@ -31,6 +40,8 @@ export const EVENTS_SETTLE_MS = 30_000;
 const EVENTS_PAGE = 200;
 /** More image loads than this for one email are ignored (they'd only be someone hammering it). */
 const MAX_HITS_PER_EMAIL = 300;
+/** One counter for the whole server, so rotating addresses doesn't sidestep the per-address limit. */
+const SHARED_KEY = "register:*";
 /** How far back a poll may reach: a week away still counts, but months of history never replay. */
 const EVENTS_MAX_LOOKBACK_MS = 7 * 24 * 3600_000;
 
@@ -153,11 +164,29 @@ async function recordHit(env: Env, token: string, req: Request): Promise<void> {
 // ---------------------------------------------------------------------------------------------
 
 app.post("/api/register", async (c) => {
+  const now = Date.now();
+  const keys = [`register:${callerAddress(c.req.raw.headers)}`, SHARED_KEY];
+
+  // Refuse before reading the body, so a locked-out caller costs us nothing.
+  const waits = await Promise.all(keys.map((k) => waitRequired(c.env.DB, k, now)));
+  const wait = Math.max(...waits);
+  if (wait > 0) {
+    return c.json({ error: "too_many_attempts", retryAfterMs: wait }, 429, {
+      "Retry-After": String(Math.ceil(wait / 1000)),
+    });
+  }
+
   const body = await readJson(c);
   const invite = typeof body?.inviteCode === "string" ? body.inviteCode.trim() : "";
   if (c.env.INVITE_CODE && !(await safeEqual(invite, c.env.INVITE_CODE))) {
-    return c.json({ error: "invalid_invite_code" }, 403);
+    const [next] = await Promise.all([
+      recordFailure(c.env.DB, keys[0]!, PER_ADDRESS, now),
+      recordFailure(c.env.DB, SHARED_KEY, SHARED, now),
+    ]);
+    return c.json({ error: "invalid_invite_code", ...(next > 0 && { retryAfterMs: next }) }, 403);
   }
+  // They know the code, so their earlier fumbles stop counting.
+  await clearFailures(c.env.DB, keys);
   const userId = newUserId();
   const apiKey = newApiKey();
   const mintKey = newMintKey();
@@ -440,6 +469,8 @@ export async function housekeeping(env: Env, now = Date.now()): Promise<void> {
     env.DB.prepare(
       "DELETE FROM self_views WHERE ts < ? AND NOT EXISTS (SELECT 1 FROM messages m WHERE m.token = self_views.token)",
     ).bind(orphanCutoff),
+    // Strikes that have aged out carry no weight, so stop storing them.
+    env.DB.prepare("DELETE FROM rate_limits WHERE updated_at < ?").bind(now - STRIKE_TTL_MS),
   ];
   const days = Number(env.RETENTION_DAYS ?? 0);
   if (Number.isFinite(days) && days > 0) {

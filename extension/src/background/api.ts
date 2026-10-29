@@ -4,6 +4,8 @@ export class ApiError extends Error {
   constructor(
     readonly status: number,
     message: string,
+    /** How long the server asked us to wait, when it said so (429). */
+    readonly retryAfterMs?: number,
   ) {
     super(message);
   }
@@ -63,12 +65,15 @@ export async function call<T>(
   if (res.status === 401 && conn.apiKey) onUnauthorized?.();
   if (!res.ok) {
     let code = res.statusText;
+    let retryAfterMs: number | undefined;
     try {
-      code = ((await res.json()) as { error?: string }).error ?? code;
+      const body = (await res.json()) as { error?: string; retryAfterMs?: number };
+      code = body.error ?? code;
+      if (typeof body.retryAfterMs === "number") retryAfterMs = body.retryAfterMs;
     } catch {
       /* not JSON */
     }
-    throw new ApiError(res.status, code || `HTTP ${res.status}`);
+    throw new ApiError(res.status, code || `HTTP ${res.status}`, retryAfterMs);
   }
   if (res.status === 204) return undefined as T;
   return (await res.json()) as T;

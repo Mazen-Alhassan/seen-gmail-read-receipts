@@ -305,6 +305,15 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
   return true;
 });
 
+/** "30 seconds" / "4 minutes" — vague on purpose, since the exact figure doesn't help anyone. */
+function waitLabel(ms: number | undefined): string {
+  const seconds = Math.ceil((ms ?? 0) / 1000);
+  if (seconds <= 1) return "a moment";
+  if (seconds < 60) return `${seconds} seconds`;
+  const minutes = Math.ceil(seconds / 60);
+  return minutes === 1 ? "a minute" : `${minutes} minutes`;
+}
+
 async function requireConnection(): Promise<Connection> {
   const conn = await getConnection();
   if (!conn) throw new Error("Seen isn't connected to a server yet");
@@ -511,6 +520,9 @@ async function connect(input: string, inviteCode: string): Promise<Responses["co
   } catch (err) {
     if (err instanceof ApiError) {
       if (err.status === 403) return { ok: false, error: "That invite code isn't right." };
+      if (err.status === 429) {
+        return { ok: false, error: `Too many wrong invite codes. Try again in ${waitLabel(err.retryAfterMs)}.` };
+      }
       if (err.status === 0) return { ok: false, error: `Can't reach ${serverUrl}. Check the address.` };
       if (err.status === 404) return { ok: false, error: "That address doesn't look like a Seen server." };
     }

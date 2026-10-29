@@ -10,6 +10,14 @@ import type {
 } from "../../shared/api";
 import { importMintKey, mintToken, newUserId, pixelPath } from "../../shared/token";
 import { EVENTS_SETTLE_MS, housekeeping, resolver } from "../src/app";
+import {
+  PER_ADDRESS,
+  SHARED,
+  STRIKE_TTL_MS,
+  lockoutFor,
+  recordFailure,
+  waitRequired,
+} from "../src/ratelimit";
 import * as entry from "../src/index";
 import worker from "../src/index";
 import { UA } from "./fixtures";
@@ -499,5 +507,89 @@ describe("housekeeping", () => {
     await env.DB.prepare("UPDATE messages SET sent_at = ? WHERE token = ?").bind(Date.now() - 400 * 86400_000, token).run();
     await housekeeping({ ...env, RETENTION_DAYS: "365" });
     expect((await api(`/api/messages/${token}`, { key: user.apiKey })).status).toBe(404);
+  });
+});
+
+describe("invite-code throttling", () => {
+  const guess = (ip: string) =>
+    api("/api/register", {
+      method: "POST",
+      body: { inviteCode: "not-the-code" },
+      headers: { "CF-Connecting-IP": ip },
+    });
+
+  it("costs nothing until you've fumbled a few times, then doubles", () => {
+    expect(lockoutFor(PER_ADDRESS, 1)).toBe(0);
+    expect(lockoutFor(PER_ADDRESS, PER_ADDRESS.free)).toBe(0);
+    expect(lockoutFor(PER_ADDRESS, PER_ADDRESS.free + 1)).toBe(PER_ADDRESS.base);
+    expect(lockoutFor(PER_ADDRESS, PER_ADDRESS.free + 2)).toBe(PER_ADDRESS.base * 2);
+    expect(lockoutFor(PER_ADDRESS, PER_ADDRESS.free + 3)).toBe(PER_ADDRESS.base * 4);
+    // Never unbounded, however long someone keeps at it.
+    expect(lockoutFor(PER_ADDRESS, 500)).toBe(PER_ADDRESS.max);
+    expect(lockoutFor(SHARED, 500)).toBe(SHARED.max);
+  });
+
+  it("stops an address that keeps guessing, and says how long to wait", async () => {
+    const ip = "203.0.113.50";
+    for (let i = 0; i < PER_ADDRESS.free + 1; i++) {
+      expect((await guess(ip)).status).toBe(403);
+    }
+    const blocked = await guess(ip);
+    expect(blocked.status).toBe(429);
+    expect(Number(blocked.headers.get("Retry-After"))).toBeGreaterThan(0);
+
+    // Even the right code waits: the lockout is decided before we look at it.
+    const correct = await api("/api/register", {
+      method: "POST",
+      body: { inviteCode: "test-invite" },
+      headers: { "CF-Connecting-IP": ip },
+    });
+    expect(correct.status).toBe(429);
+  });
+
+  it("doesn't punish everyone else for one address's guessing", async () => {
+    const ip = "203.0.113.51";
+    for (let i = 0; i < PER_ADDRESS.free + 1; i++) await guess(ip);
+    expect((await guess(ip)).status).toBe(429);
+
+    const elsewhere = await api("/api/register", {
+      method: "POST",
+      body: { inviteCode: "test-invite" },
+      headers: { "CF-Connecting-IP": "198.51.100.4" },
+    });
+    expect(elsewhere.status).toBe(201);
+  });
+
+  it("forgets your fumbles once you get it right", async () => {
+    const ip = "203.0.113.52";
+    for (let i = 0; i < PER_ADDRESS.free; i++) expect((await guess(ip)).status).toBe(403);
+    const ok = await api("/api/register", {
+      method: "POST",
+      body: { inviteCode: "test-invite" },
+      headers: { "CF-Connecting-IP": ip },
+    });
+    expect(ok.status).toBe(201);
+    expect(await waitRequired(env.DB, `register:${ip}`, Date.now())).toBe(0);
+    // And the slate really is clean: the next few mistakes are free again.
+    for (let i = 0; i < PER_ADDRESS.free; i++) expect((await guess(ip)).status).toBe(403);
+  });
+
+  it("stops holding a quiet day's silence against you", async () => {
+    const key = "register:203.0.113.53";
+    const at = Date.now();
+    for (let i = 0; i < PER_ADDRESS.free + 1; i++) await recordFailure(env.DB, key, PER_ADDRESS, at);
+    expect(await waitRequired(env.DB, key, at)).toBeGreaterThan(0);
+    expect(await waitRequired(env.DB, key, at + STRIKE_TTL_MS + 1)).toBe(0);
+    // A later failure starts counting from scratch rather than resuming the old streak.
+    expect(await recordFailure(env.DB, key, PER_ADDRESS, at + STRIKE_TTL_MS + 1)).toBe(0);
+  });
+
+  it("clears out stale strikes on the daily sweep", async () => {
+    const key = "register:203.0.113.54";
+    const old = Date.now() - STRIKE_TTL_MS - 60_000;
+    await recordFailure(env.DB, key, PER_ADDRESS, old);
+    await housekeeping(env);
+    const row = await env.DB.prepare("SELECT key FROM rate_limits WHERE key = ?").bind(key).first();
+    expect(row).toBeNull();
   });
 });
